@@ -531,7 +531,7 @@ namespace DemulShooter
                             } break;
                         case "gsevo":
                             {
-                                _Game = new Game_LindberghGhostSquadEvo(_Rom.ToLower());
+                                _Game = new Game_LindberghGsquadEvo(_Rom.ToLower());
                             } break;
                         case "hotd4":
                             {

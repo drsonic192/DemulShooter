@@ -30,7 +30,6 @@ namespace DemulShooter
         /// <summary>
         /// Constructor
         /// </summary>
-        ///  public Naomi_Game(String DemulVersion, bool Verbose, bool DisableWindow)
         public Game_RtAliensArmageddon(String RomName)
             : base(RomName, "BudgieLoader")
         {

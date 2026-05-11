@@ -583,46 +583,49 @@ namespace DemulShooter
                     line = sr.ReadLine();
                     while (line != null)
                     {
-                        String[] buffer = line.Split('=');
-                        if (buffer.Length > 1)
+                        if (!line.StartsWith(";"))
                         {
-                            try
+                            String[] buffer = line.Split('=');
+                            if (buffer.Length > 1)
                             {
-                                FieldName = "_" + buffer[0].Trim();
-                                if (buffer[0].Contains("Nop"))
+                                try
                                 {
-                                    NopStruct n = new NopStruct(buffer[1].Trim());
-                                    this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, n);
-                                    Logger.WriteLog(FieldName + " successfully set to following value : 0x" + n.MemoryOffset.ToString("X8") + "|" + n.Length.ToString());
+                                    FieldName = "_" + buffer[0].Trim();
+                                    if (buffer[0].Contains("Nop"))
+                                    {
+                                        NopStruct n = new NopStruct(buffer[1].Trim());
+                                        this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, n);
+                                        Logger.WriteLog(FieldName + " successfully set to following value : 0x" + n.MemoryOffset.ToString("X8") + "|" + n.Length.ToString());
+                                    }
+                                    else if (buffer[0].Contains("InjectionStruct"))
+                                    {
+                                        InjectionStruct n = new InjectionStruct(buffer[1].Trim());
+                                        this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, n);
+                                        Logger.WriteLog(FieldName + " successfully set to following value : 0x" + n.InjectionOffset.ToString("X8") + "|" + n.Length.ToString());
+                                    }
+                                    else if (buffer[0].Contains("DIK"))
+                                    {
+                                        HardwareScanCode sc = (HardwareScanCode)Enum.Parse(typeof(HardwareScanCode), buffer[1].Trim());
+                                        this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, sc);
+                                        Logger.WriteLog(FieldName + " successfully set to following value :" + sc.ToString());
+                                    }
+                                    else if (buffer[0].Contains("VK"))
+                                    {
+                                        VirtualKeyCode vk = (VirtualKeyCode)Enum.Parse(typeof(VirtualKeyCode), buffer[1].Trim());
+                                        this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, vk);
+                                        Logger.WriteLog(FieldName + " successfully set to following value :" + vk.ToString());
+                                    }
+                                    else
+                                    {
+                                        UInt32 v = UInt32.Parse(buffer[1].Substring(3).Trim(), NumberStyles.HexNumber);
+                                        this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, v);
+                                        Logger.WriteLog(FieldName + " successfully set to following value : 0x" + v.ToString("X8"));
+                                    }
                                 }
-                                else if (buffer[0].Contains("InjectionStruct"))
+                                catch (Exception ex)
                                 {
-                                    InjectionStruct n = new InjectionStruct(buffer[1].Trim());
-                                    this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, n);
-                                    Logger.WriteLog(FieldName + " successfully set to following value : 0x" + n.InjectionOffset.ToString("X8") + "|" + n.Length.ToString());
+                                    Logger.WriteLog("Error reading game data for " + FieldName + " : " + ex.Message.ToString());
                                 }
-                                else if (buffer[0].Contains("DIK"))
-                                {
-                                    HardwareScanCode sc = (HardwareScanCode)Enum.Parse(typeof(HardwareScanCode), buffer[1].Trim());
-                                    this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, sc);
-                                    Logger.WriteLog(FieldName + " successfully set to following value :" + sc.ToString());
-                                }
-                                else if (buffer[0].Contains("VK"))
-                                {
-                                    VirtualKeyCode vk = (VirtualKeyCode)Enum.Parse(typeof(VirtualKeyCode), buffer[1].Trim());
-                                    this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, vk);
-                                    Logger.WriteLog(FieldName + " successfully set to following value :" + vk.ToString());
-                                }
-                                else
-                                {
-                                    UInt32 v = UInt32.Parse(buffer[1].Substring(3).Trim(), NumberStyles.HexNumber);
-                                    this.GetType().GetField(FieldName, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase).SetValue(this, v);
-                                    Logger.WriteLog(FieldName + " successfully set to following value : 0x" + v.ToString("X8"));
-                                }                                
-                            }
-                            catch (Exception ex)
-                            {
-                                Logger.WriteLog("Error reading game data for " + FieldName + " : " + ex.Message.ToString());
                             }
                         }
                         line = sr.ReadLine();
@@ -1078,7 +1081,7 @@ namespace DemulShooter
                     Win32API.GetWindowText(handle, builder, length + 1);
                     string WindowTitle = builder.ToString();
                     Logger.WriteLog("Found a window : Handle = 0x" + handle.ToString("X8") + ", Title = " + WindowTitle);
-                    if (WindowTitle.StartsWith("FPS:") || WindowTitle.Contains(TargetWindowTitle))
+                    if (WindowTitle.StartsWith("FPS:") || WindowTitle.ToLower().Contains(TargetWindowTitle.ToLower()))
                     {
                         _GameWindowHandle = handle;
                         Logger.WriteLog("=> Selecting 0x" + handle.ToString("X8") + " as game Window Handle");

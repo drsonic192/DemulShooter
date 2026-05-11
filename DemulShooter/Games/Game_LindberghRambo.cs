@@ -1,73 +1,50 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows.Forms;
 using DsCore;
 using DsCore.Config;
 using DsCore.MameOutput;
 using DsCore.Memory;
 using DsCore.RawInput;
-using DsCore.Win32;
 
-namespace DemulShooter
+namespace DemulShooter.Games
 {
-    class Game_LindberghRambo : Game
+    public class Game_LindberghRambo : Game
     {
-        private UInt32 _InputStructPtr_Address = 0x085CE940;
-        private UInt32 _P1_InputStruct_Address = 0;
-        private UInt32 _P2_InputStruct_Address = 0;
+        private const String GAMEDATA_FOLDER = @"MemoryData\lindbergh\rambo";
 
-        //INPUT_STRUCT offset in game
-        //Hacking axis in this structure, to be sure there will be no issue with reload and aim offset
-        private const UInt32 INPUT_X_OFFSET = 0x04;
-        private const UInt32 INPUT_Y_OFFSET = 0x05;        
+        //Inputs
+        private InjectionStruct _JvsRawAxes_InjectionStruct = new InjectionStruct(0x083D696A, 7);
+        private InjectionStruct _AdjustedAxes_InjectionStruct = new InjectionStruct(0x08075288, 6);
+        private InjectionStruct _Buttons_InjectionStruct = new InjectionStruct(0x083D6729, 7);
 
-        //static load JVS data structure from code at 0x082C72B1 procedure
-        private UInt32 _JvsStruct_Address = 0x0ADDF360;
-        private const UInt32 JVS_P1_TRIGGER_OFFSET = 0x19C;
-        private const UInt32 JVS_P1_RAGE_OFFSET = 0x1A0;
-        private const UInt32 JVS_P2_TRIGGER_OFFSET = 0x1A4;
-        private const UInt32 JVS_P2_RAGE_OFFSET = 0x1A8;
-        private const UInt32 JVS_P1_X_OFFSET = 0x1AD;
-        private const UInt32 JVS_P1_Y_OFFSET = 0x1B3;
-        private const UInt32 JVS_P2_X_OFFSET = 0x1B9;
-        private const UInt32 JVS_P2_Y_OFFSET = 0x1BF;        
-
-        //NOP for Gun init procedure, in CGunMgr::Init() procedure
-        private NopStruct _Nop_X_Init = new NopStruct(0x08073833, 4);
-        private NopStruct _Nop_Y_Init = new NopStruct(0x0807383A, 4);
-
-        //NOP for Gun axis and buttons in-game, in JvsNodeReceive() procedure        
-        //Used to NOP JVS data at source, this is used to validate coordinates On/Out of screen for reload
-        private NopStruct _Nop_Jvs_Src_Axis_1 = new NopStruct(0x082C7E47, 3);
-        private NopStruct _Nop_Jvs_Src_Axis_2 = new NopStruct(0x082C78D3, 3);
-
-        //NOP for post-calculated cordinates, in CGunMgr::MainProc() procedure
-        private NopStruct _Nop_Axis_X = new NopStruct(0x08073EBB, 3);
-        private NopStruct _Nop_Axis_Y = new NopStruct(0x08073EC5, 3);
-
-        //Codecave injection blocking gun buttons
-        private UInt32 _Btn_Injection_Address = 0x082C7B3C;
-        private UInt32 _Btn_Injection_Return_Address = 0x082C7B41;
+        //Outputs
+        private UInt32 _JvsMgrPtr_Address = 0x085DD158;
+        private UInt32 _CreditsMgrPtr_Address = 0x085DC2B0;
+        private UInt32 _PlayerMgrPtr_Address = 0x85CE9B0;
 
         //Show crosshair flag
-        private UInt32 _DrawSightFlag_Address = 0x85A3bE8;
-        
-        //Outputs
-        private UInt32 _OutputsPtr_Address = 0x085DD158;
-        private UInt32 _Outputs_Address;
-        private UInt32 _pCreditsMgr_Address = 0x085DC2B0;
-        private UInt32 _PlayerStructPtr_Address = 0x85CE9B0;
+        private UInt32 _DrawSightFlag_Address = 0x85A3BE8;
 
-        private UInt32 _RomLoaded_Check_Instruction = 0x08073BC7;
+        //Custom Data
+        private UInt32 _JvsRawAxes_CaveAddress;
+        private UInt32 _AdjustedAxes_CaveAddress;
+        private UInt32 _Buttons_CaveAddress;
+
+        private UInt32 _RomLoaded_Check_Address = 0x08073BC7;
 
         /// <summary>
         /// Constructor
         /// </summary>
-        ///  public Naomi_Game(String DemulVersion, bool Verbose, bool DisableWindow)
         public Game_LindberghRambo(String RomName)
-            : base(RomName, "BudgieLoader")
+            : base(RomName, "linuxloader")
         {
+            _KnownMd5Prints.Add("ramboD.elf (SBQL)", "cad71f7fa562b285feee195ee1ff32bf");
+            _KnownMd5Prints.Add("ramboM.elf (SBQL)", "e3ce5cd7aa18be0c0a3b9d6a7928b122");
+            _KnownMd5Prints.Add("ramboM.elf (SBSS)", "4590a750488712001d230daf69dc7fab");
+
             _tProcess.Start();
             Logger.WriteLog("Waiting for Lindbergh " + _RomName + " game to hook.....");
         }
@@ -90,21 +67,53 @@ namespace DemulShooter
 
                         if (_TargetProcess_MemoryBaseAddress != IntPtr.Zero)
                         {
-                            //To make sure BurgieLoader has loaded the rom entirely, we're looking for some random instruction to be present in memory before starting 
-                            byte[] buffer = ReadBytes(_RomLoaded_Check_Instruction, 5);
-                            if (buffer[0] == 0xE8 && buffer[1] == 0x76 && buffer[2] == 0x01 && buffer[3] == 0x00 && buffer[4] == 0x00)
+                            if (_Target_Process_Name.ToLower().Contains("budgieloader"))
                             {
-                                _GameWindowHandle = _TargetProcess.MainWindowHandle;
-                                Logger.WriteLog("Attached to Process " + _Target_Process_Name + ".exe, ProcessHandle = " + _ProcessHandle);
-                                Logger.WriteLog(_Target_Process_Name + ".exe = 0x" + _TargetProcess_MemoryBaseAddress.ToString("X8"));
-                                Apply_MemoryHacks();
-                                _ProcessHooked = true;
-                                RaiseGameHookedEvent();                                
+                                if (!FindGameWindow_Contains("RAMBO"))
+                                {
+                                    Logger.WriteLog("Game Window not found, waiting...");
+                                    return;
+                                }
+                            }
+                            else if (_Target_Process_Name.ToLower().Contains("linuxloader"))
+                            {
+                                if (!FindGameWindow_Contains("FPS"))
+                                {
+                                    Logger.WriteLog("Game Window not found, waiting...");
+                                    return;
+                                }
+                            }
+
+                            //To make sure LinuxLoader has loaded the rom entirely, we're looking for some random instruction to be present in memory before starting                            
+                            //And this instruction is also helping us detecting whether the game file is Rev.A or Rev.B or Rev.C binary, to call the corresponding hack
+                            byte[] buffer = ReadBytes(_RomLoaded_Check_Address, 3);
+                            if (buffer.SequenceEqual(new byte[] { 0xE8, 0x76, 0x01 }))
+                            {
+                                Logger.WriteLog("ramboD.elf (SBQL) binary detected");
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["ramboD.elf (SBQL)"];
+                            }
+                            else if (buffer.SequenceEqual(new byte[] { 0x89, 0x1C, 0x24 }))
+                            {
+                                Logger.WriteLog("ramboM.elf (SBQL) binary detected");
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["ramboM.elf (SBQL)"];
+                            }
+                            else if (buffer.SequenceEqual(new byte[] { 0xE9, 0x86, 0xEF }))
+                            {
+                                Logger.WriteLog("ramboM.elf (SBSS) binary detected");
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["ramboM.elf (SBSS)"];
                             }
                             else
                             {
                                 Logger.WriteLog("Game not Loaded, waiting...");
+                                return;
                             }
+
+                            Logger.WriteLog("Attached to Process " + _Target_Process_Name + ".exe, ProcessHandle = " + _ProcessHandle);
+                            Logger.WriteLog(_Target_Process_Name + ".exe = 0x" + _TargetProcess_MemoryBaseAddress.ToString("X8"));
+                            ReadGameDataFromMd5Hash(GAMEDATA_FOLDER);
+                            Apply_MemoryHacks();
+                            _ProcessHooked = true;
+                            RaiseGameHookedEvent();
                         }
                     }
                 }
@@ -144,8 +153,8 @@ namespace DemulShooter
                     Logger.WriteLog("Game Window Rect (Px) = [ " + TotalResX + "x" + TotalResY + " ]");
 
                     //X and Y axis => 0x00 - 0xFF                    
-                    double dMaxX = 256.0;
-                    double dMaxY = 256.0;
+                    double dMaxX = 255.0;
+                    double dMaxY = 255.0;
 
                     PlayerData.RIController.Computed_X = Convert.ToInt16(Math.Round(dMaxX * PlayerData.RIController.Computed_X / TotalResX));
                     PlayerData.RIController.Computed_Y = Convert.ToInt16(Math.Round(dMaxY * PlayerData.RIController.Computed_Y / TotalResY));
@@ -174,89 +183,145 @@ namespace DemulShooter
 
         protected override void Apply_InputsMemoryHack()
         {
-            SetHack_Btn();
+            Create_InputsDataBank();
+            _JvsRawAxes_CaveAddress = _InputsDatabank_Address;
+            _AdjustedAxes_CaveAddress = _InputsDatabank_Address + 0x10;
+            _Buttons_CaveAddress = _InputsDatabank_Address + 0x20;
 
-            // CgunMgr::Init() => 0x0807382A ~ 0x080738D1
-            // Init Axis and buttons values to 0
-            // Not called that often (maybe after START or CONTINUE or new level), maybe not necessary to block them
-            SetNops(0, _Nop_X_Init);
-            SetNops(0, _Nop_Y_Init);            
-            
-            //These one were here to NOP axis data in JVS read procedure.
-            //These values are used to compute aiming at screen with gun calibration parameters,
-            //But we need to set these properly to allow shoot (on-screen values) or to allow Reload (out-of-screen values)
-            //We init them on-screen and will set them out-of-screen on a right click event
-            SetNops(0, _Nop_Jvs_Src_Axis_1);
-            SetNops(0, _Nop_Jvs_Src_Axis_2);
-            WriteByte(_JvsStruct_Address + JVS_P1_X_OFFSET, 0x80);
-            WriteByte(_JvsStruct_Address + JVS_P1_Y_OFFSET, 0x80);
-            WriteByte(_JvsStruct_Address + JVS_P2_X_OFFSET, 0x80);
-            WriteByte(_JvsStruct_Address + JVS_P2_Y_OFFSET, 0x80);            
-
-            //These one will block axis values later after calibration calculations and will give us our aim
-            SetNops(0, _Nop_Axis_X);
-            SetNops(0, _Nop_Axis_Y);
-
-            //Change init for JVS values axis to set values to 0x80 instead of 00
-            List<byte> Buffer = new List<byte>();
-            Buffer.Add(0xC7);
-            Buffer.Add(0x01);
-            Buffer.Add(0x00);
-            Buffer.Add(0x80);
-            Buffer.Add(0x00);
-            Buffer.Add(0x00);
-            Buffer.Add(0x90);
-            Buffer.Add(0x90);
-            Buffer.Add(0x90);
-            Buffer.Add(0x90);
-            Buffer.Add(0x90);
-            WriteBytes(0x082C7EE8, Buffer.ToArray());
-
-            Logger.WriteLog("Inputs Memory Hack complete !");
-            Logger.WriteLog("-");
+            SetHack_JvsRawAxes();
+            SetHack_AdjustedAxes();
+            SetHack_Buttons();
         }
 
         /// <summary>
-        /// Gun Buttons and Start are on same memory word, so we need to filter to let Teknoparrot Start button work
+        /// At the end of amJvspAckAnalogInput(), replacing Axis value before memory copy
         /// </summary>
-        private void SetHack_Btn()
+        private void SetHack_JvsRawAxes()
         {
-            List<Byte> Buffer = new List<Byte>();
-            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess.MainModule.BaseAddress);
+            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess_MemoryBaseAddress);
             CaveMemory.Open();
             CaveMemory.Alloc(0x800);
-            //cmp [ebp-10], 1
-            CaveMemory.Write_StrBytes("83 7D F0 01");
-            //je exit
-            CaveMemory.Write_StrBytes("0F 84 0A 00 00 00");
-            //and al, 0x80
-            CaveMemory.Write_StrBytes("24 80");
-            //and [edx], 0xFFFFFF0F
-            CaveMemory.Write_StrBytes("81 22 0F FF FF FF");
-            //or [edx], al
-            CaveMemory.Write_StrBytes("08 02");
-            //Exit:
-            //mov eax, [ebp-0C]
-            CaveMemory.Write_StrBytes("8B 45 F4");
-            //jmp back
-            CaveMemory.Write_jmp(_Btn_Injection_Return_Address);
 
-            Logger.WriteLog("Adding Buttons Codecave_1 at : 0x" + CaveMemory.CaveAddress.ToString("X8"));
+            //lea ecx,[ebx-B]
+            CaveMemory.Write_StrBytes("8D 4B F5");
+            //movzx ecx,word ptr [ecx+_Axes_CaveAddress]
+            CaveMemory.Write_StrBytes("0F B6 89");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_JvsRawAxes_CaveAddress));
+            //lea ebx,[ebx+esi+00000102]
+            CaveMemory.Write_StrBytes("8D 9C 33 02 01 00 00");
+            //mov [ebx],cx
+            CaveMemory.Write_StrBytes("66 89 0B");
 
-            //Code injection
-            IntPtr ProcessHandle = _TargetProcess.Handle;
-            UInt32 bytesWritten = 0;
-            UInt32 jumpTo = 0;
-            jumpTo = CaveMemory.CaveAddress - (_Btn_Injection_Address) - 5;
-            Buffer = new List<byte>();
-            Buffer.Add(0xE9);
-            Buffer.AddRange(BitConverter.GetBytes(jumpTo));
-            Win32API.WriteProcessMemory(ProcessHandle, _Btn_Injection_Address, Buffer.ToArray(), (UInt32)Buffer.Count, ref bytesWritten);
+            //Inject it
+            CaveMemory.InjectToAddress(_JvsRawAxes_InjectionStruct, "Axes");
         }
 
+        /// <summary>
+        /// Replacing GetAdjstGunPos() content
+        /// </summary>
+        private void SetHack_AdjustedAxes()
+        {
+            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess_MemoryBaseAddress);
+            CaveMemory.Open();
+            CaveMemory.Alloc(0x800);
+
+            //mov eax,[esp+18]
+            CaveMemory.Write_StrBytes("8B 44 24 18");
+            //shl eax,1
+            CaveMemory.Write_StrBytes("D1 E0");
+            //movzx eax,byte ptr [eax+_Buttons_CaveAddress + 6]
+            CaveMemory.Write_StrBytes("0F B6 80");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_Buttons_CaveAddress + 6));
+            //and al,1
+            CaveMemory.Write_StrBytes("24 01");
+            //test al,al
+            CaveMemory.Write_StrBytes("84 C0");
+            //je OnScreen
+            CaveMemory.Write_StrBytes("74 11");
+            //mov eax,[esp+04]
+            CaveMemory.Write_StrBytes("8B 44 24 04");
+            //mov byte ptr [eax],
+            CaveMemory.Write_StrBytes("C6 00 FF");
+            //mov eax,[esp+08]
+            CaveMemory.Write_StrBytes("8B 44 24 08");
+            //mov byte ptr [eax],
+            CaveMemory.Write_StrBytes("C6 00 FF");
+            //xor eax,eax
+            CaveMemory.Write_StrBytes("31 C0");
+            //ret
+            CaveMemory.Write_StrBytes("C3");
+
+            //OnScreen:
+            //mov eax,[esp+18]
+            CaveMemory.Write_StrBytes("8B 44 24 18");
+            //shl eax,1
+            CaveMemory.Write_StrBytes("D1 E0");
+            //add eax,_AdjustedAxes_CaveAddress
+            CaveMemory.Write_StrBytes("05");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_AdjustedAxes_CaveAddress));
+            //movzx eax,word ptr [eax]
+            CaveMemory.Write_StrBytes("0F B7 00");
+            //mov edx,[esp+04]
+            CaveMemory.Write_StrBytes("8B 54 24 04");
+            //mov byte ptr[edx],al
+            CaveMemory.Write_StrBytes("88 02");
+            //mov edx,[esp+08]
+            CaveMemory.Write_StrBytes("8B 54 24 08");
+            //shr eax, 8
+            CaveMemory.Write_StrBytes("C1 E8 08");
+            //mov byte ptr[edx],al
+            CaveMemory.Write_StrBytes("88 02");
+            //mov eax,00000001
+            CaveMemory.Write_StrBytes("B8 01 00 00 00");
+            //ret
+            CaveMemory.Write_StrBytes("C3");
+
+            //Inject it
+            CaveMemory.InjectToAddress(_AdjustedAxes_InjectionStruct, "Adjusted Axes");
+        }
+
+        /// <summary>
+        /// At the end of amJvspAckSwInput(), removing the wanted buttons bit states from the source memory (Trigger, Reload, and Grenade)
+        /// and changing the bits with custom values before memorycopy
+        /// </summary>
+        private void SetHack_Buttons()
+        {
+            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess_MemoryBaseAddress);
+            CaveMemory.Open();
+            CaveMemory.Alloc(0x800);
+
+            //cmp esi,05
+            CaveMemory.Write_StrBytes("83 FE 05");
+            //je originalcode
+            CaveMemory.Write_StrBytes("74 28");
+            //and byte ptr [edx+esi+00000102],FC
+            CaveMemory.Write_StrBytes("80 A4 32 02 01 00 00 FC");
+            //and byte ptr [edx+esi+00000103],7F
+            CaveMemory.Write_StrBytes("80 A4 32 03 01 00 00 7F");
+            //movzx ecx,word ptr [esi+_Buttons_CaveAddress]
+            CaveMemory.Write_StrBytes("0F B7 8E");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_Buttons_CaveAddress));
+            //or [edx+esi+00000102],cl
+            CaveMemory.Write_StrBytes("08 8C 32 02 01 00 00");
+            //shr ecx,08
+            CaveMemory.Write_StrBytes("C1 E9 08");
+            //or [edx+esi+00000102],cl
+            CaveMemory.Write_StrBytes("08 8C 32 03 01 00 00");
+            //originalcode:
+            //lea eax,[edx+esi+00000102]
+            CaveMemory.Write_StrBytes("8D 84 32 02 01 00 00");
+
+            //Inject it
+            CaveMemory.InjectToAddress(_Buttons_InjectionStruct, "Buttons");
+        }
+
+        /// <summary>
+        /// ramboD.elf has a switch to draw sight, but ramboM does not
+        /// </summary>
         protected override void Apply_NoCrosshairMemoryHack()
         {
-            WriteByte(_DrawSightFlag_Address, 0);
+            if (_TargetProcess_Md5Hash.Equals(_KnownMd5Prints["ramboD.elf (SBQL)"]))
+                WriteByte(_DrawSightFlag_Address, 0);
         }
 
         #endregion
@@ -268,81 +333,55 @@ namespace DemulShooter
         /// </summary>
         public override void SendInput(PlayerSettings PlayerData)
         {
-            byte[] buffer = ReadBytes(_InputStructPtr_Address, 4);
-
             if (PlayerData.ID == 1)
             {
-                try
-                {
-                    _P1_InputStruct_Address = BitConverter.ToUInt32(buffer, 0) + 0x34;
-                    if (_P1_InputStruct_Address != 0)
-                    {
-                        WriteByte(_P1_InputStruct_Address + INPUT_X_OFFSET, (byte)PlayerData.RIController.Computed_X);
-                        WriteByte(_P1_InputStruct_Address + INPUT_Y_OFFSET, (byte)PlayerData.RIController.Computed_Y);
+                WriteByte(_JvsRawAxes_CaveAddress, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_JvsRawAxes_CaveAddress + 0x02, (byte)PlayerData.RIController.Computed_Y);
 
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
-                            Apply_OR_ByteMask(_JvsStruct_Address + JVS_P1_TRIGGER_OFFSET, 0x02);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
-                            Apply_AND_ByteMask(_JvsStruct_Address + JVS_P1_TRIGGER_OFFSET, 0xFD);
-                        
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
-                            Apply_OR_ByteMask(_JvsStruct_Address + JVS_P1_RAGE_OFFSET, 0x80);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
-                            Apply_AND_ByteMask(_JvsStruct_Address + JVS_P1_RAGE_OFFSET, 0x0F);
-                        
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
-                        {
-                            WriteByte(_JvsStruct_Address + JVS_P1_X_OFFSET, 0xFF);
-                            WriteByte(_JvsStruct_Address + JVS_P1_Y_OFFSET, 0xFF);
-                            Apply_OR_ByteMask(_JvsStruct_Address + JVS_P1_TRIGGER_OFFSET, 0x01);
-                        }
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
-                        {
-                            WriteByte(_JvsStruct_Address + JVS_P1_X_OFFSET, 0x80);
-                            WriteByte(_JvsStruct_Address + JVS_P1_Y_OFFSET, 0x80);
-                            Apply_AND_ByteMask(_JvsStruct_Address + JVS_P1_TRIGGER_OFFSET, 0xFE);
-                        }
-                    }
+                WriteByte(_AdjustedAxes_CaveAddress, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_AdjustedAxes_CaveAddress + 1, (byte)PlayerData.RIController.Computed_Y);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x02);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFD);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 7, 0x80);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 7, 0x7F);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
+                {
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x01);
                 }
-                catch
-                { }
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFE);
             }
             else if (PlayerData.ID == 2)
             {
-                try
+                WriteByte(_JvsRawAxes_CaveAddress + 0x04, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_JvsRawAxes_CaveAddress + 0x06, (byte)PlayerData.RIController.Computed_Y);
+
+                WriteByte(_AdjustedAxes_CaveAddress + 2, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_AdjustedAxes_CaveAddress + 3, (byte)PlayerData.RIController.Computed_Y);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 8, 0x02);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 8, 0xFD);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 9, 0x80);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 9, 0x7F);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
                 {
-                    _P2_InputStruct_Address = BitConverter.ToUInt32(buffer, 0) + 0x64;
-                    if (_P2_InputStruct_Address != 0)
-                    {
-                        WriteByte(_P2_InputStruct_Address + INPUT_X_OFFSET, (byte)PlayerData.RIController.Computed_X);
-                        WriteByte(_P2_InputStruct_Address + INPUT_Y_OFFSET, (byte)PlayerData.RIController.Computed_Y);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
-                            Apply_OR_ByteMask(_JvsStruct_Address + JVS_P2_TRIGGER_OFFSET, 0x02);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
-                            Apply_AND_ByteMask(_JvsStruct_Address + JVS_P2_TRIGGER_OFFSET, 0xFD);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
-                            Apply_OR_ByteMask(_JvsStruct_Address + JVS_P2_RAGE_OFFSET, 0x80);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
-                            Apply_AND_ByteMask(_JvsStruct_Address + JVS_P2_RAGE_OFFSET, 0x0F);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
-                        {
-                            WriteByte(_JvsStruct_Address + JVS_P2_X_OFFSET, 0xFF);
-                            WriteByte(_JvsStruct_Address + JVS_P2_Y_OFFSET, 0xFF);
-                            Apply_OR_ByteMask(_JvsStruct_Address + JVS_P2_TRIGGER_OFFSET, 0x01);
-                        }
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
-                        {
-                            WriteByte(_JvsStruct_Address + JVS_P2_X_OFFSET, 0x80);
-                            WriteByte(_JvsStruct_Address + JVS_P2_Y_OFFSET, 0x80);
-                            Apply_AND_ByteMask(_JvsStruct_Address + JVS_P2_TRIGGER_OFFSET, 0xFE);
-                        }
-                    }
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 8, 0x01);
                 }
-                catch
-                { }
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 8, 0xFE);
             }
         }
 
@@ -363,8 +402,6 @@ namespace DemulShooter
             _Outputs.Add(new GameOutput(OutputId.P2_GunRecoil));
             _Outputs.Add(new GameOutput(OutputId.P1_Ammo));
             _Outputs.Add(new GameOutput(OutputId.P2_Ammo));
-            _Outputs.Add(new GameOutput(OutputId.P1_Clip));
-            _Outputs.Add(new GameOutput(OutputId.P2_Clip));
             _Outputs.Add(new AsyncGameOutput(OutputId.P1_CtmRecoil, Configurator.GetInstance().OutputCustomRecoilOnDelay, Configurator.GetInstance().OutputCustomRecoilOffDelay, 0));
             _Outputs.Add(new AsyncGameOutput(OutputId.P2_CtmRecoil, Configurator.GetInstance().OutputCustomRecoilOnDelay, Configurator.GetInstance().OutputCustomRecoilOffDelay, 0));
             _Outputs.Add(new GameOutput(OutputId.P1_Life));
@@ -380,20 +417,18 @@ namespace DemulShooter
         public override void UpdateOutputValues()
         {
             //Original Outputs
-            _Outputs_Address = BitConverter.ToUInt32(ReadBytes(_OutputsPtr_Address, 4), 0);
-            SetOutputValue(OutputId.P1_LmpStart, ReadByte(_Outputs_Address) & 0x01);
-            SetOutputValue(OutputId.P2_LmpStart, ReadByte(_Outputs_Address) >> 1 & 0x01);
-            SetOutputValue(OutputId.P1_GunRecoil, ReadByte(_Outputs_Address) >> 2 & 0x01);
-            SetOutputValue(OutputId.P2_GunRecoil, ReadByte(_Outputs_Address) >> 3 & 0x01);
+            UInt32 Outputs_Address = ReadPtr(_JvsMgrPtr_Address);
+            SetOutputValue(OutputId.P1_LmpStart, ReadByte(Outputs_Address) & 0x01);
+            SetOutputValue(OutputId.P2_LmpStart, ReadByte(Outputs_Address) >> 1 & 0x01);
+            SetOutputValue(OutputId.P1_GunRecoil, ReadByte(Outputs_Address) >> 2 & 0x01);
+            SetOutputValue(OutputId.P2_GunRecoil, ReadByte(Outputs_Address) >> 3 & 0x01);
 
             //Custom Outputs
-            UInt32 PlayersPtr_BaseAddress = ReadPtr(_PlayerStructPtr_Address);
+            UInt32 PlayersPtr_BaseAddress = ReadPtr(_PlayerMgrPtr_Address);
             int P1_Ammo = 0;
             int P2_Ammo = 0;
             _P1_Life = 0;
             _P2_Life = 0;
-            int P1_Clip = 0;
-            int P2_Clip = 0;
 
             if (PlayersPtr_BaseAddress != 0)
             {
@@ -410,14 +445,10 @@ namespace DemulShooter
                 {
                     _P1_Life = ReadByte(P1_StructAddress + 0x3C);
                     P1_Ammo = ReadByte(P1_StructAddress + 0x400);
-                    
+
                     //[Damaged] custom Output                
                     if (_P1_Life < _P1_LastLife)
                         SetOutputValue(OutputId.P1_Damaged, 1);
-                    
-                    //[Clip] custom Output   
-                    if (P1_Ammo > 0)
-                        P1_Clip = 1;
                 }
 
                 if (P2_Status == 3 || P2_Status == 4)
@@ -428,26 +459,20 @@ namespace DemulShooter
                     //[Damaged] custom Output                
                     if (_P2_Life < _P2_LastLife)
                         SetOutputValue(OutputId.P2_Damaged, 1);
-
-                    //[Clip] custom Output   
-                    if (P2_Ammo > 0)
-                        P2_Clip = 1;
                 }
-            }            
+            }
             _P1_LastLife = _P1_Life;
             _P2_LastLife = _P2_Life;
 
             SetOutputValue(OutputId.P1_Ammo, P1_Ammo);
             SetOutputValue(OutputId.P2_Ammo, P2_Ammo);
-            SetOutputValue(OutputId.P1_Clip, P1_Clip);
-            SetOutputValue(OutputId.P2_Clip, P2_Clip);
             //Custom recoil will be recoil just like the original one
-            SetOutputValue(OutputId.P1_CtmRecoil, ReadByte(_Outputs_Address) >> 2 & 0x01);
-            SetOutputValue(OutputId.P2_CtmRecoil, ReadByte(_Outputs_Address) >> 3 & 0x01);
+            SetOutputValue(OutputId.P1_CtmRecoil, ReadByte(Outputs_Address) >> 2 & 0x01);
+            SetOutputValue(OutputId.P2_CtmRecoil, ReadByte(Outputs_Address) >> 3 & 0x01);
             SetOutputValue(OutputId.P1_Life, _P1_Life);
             SetOutputValue(OutputId.P2_Life, _P2_Life);
 
-            UInt32 CreditsMgr = ReadPtr(_pCreditsMgr_Address); 
+            UInt32 CreditsMgr = ReadPtr(_CreditsMgrPtr_Address);
             SetOutputValue(OutputId.Credits, (int)(ReadByte(CreditsMgr + 0x38)));
         }
 

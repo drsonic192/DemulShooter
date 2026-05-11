@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows.Forms;
 using DsCore;
 using DsCore.Config;
@@ -13,49 +14,35 @@ namespace DemulShooter
     class Game_LindberghHotd4 : Game
     {
         private const String GAMEDATA_FOLDER = @"MemoryData\lindbergh\hotd4";
-        private UInt32 _InputStructPtr_Address = 0xA6F27A8;
-        private UInt32 _P1_InputStruct_Address = 0;
-        private UInt32 _P2_InputStruct_Address = 0;
 
-        //INPUT_SET structure offset in game
-        private const UInt32 INPUT_X_OFFSET = 0x04;
-        private const UInt32 INPUT_Y_OFFSET = 0x05;
-        private const UInt32 INPUT_TRIGGER_OFFSET = 0x08;
-        private const UInt32 INPUT_RELOAD_OFFSET = 0x0C;
-        private const UInt32 INPUT_WEAPONBTN_OFFSET = 0x10;
+        //Inputs       
+        private InjectionStruct _JvsRawAxes_InjectionStruct = new InjectionStruct(0x0831E5A8, 7);
+        private InjectionStruct _AdjustedAxes_InjectionStruct = new InjectionStruct(0x81538D8, 6);
+        private InjectionStruct _Buttons_InjectionStruct = new InjectionStruct(0x0831E3C1, 7);
 
-        //NOP for Gun init procedure : CGunMgr::Init()
-        private NopStruct _Nop_Gun_Init = new NopStruct(0x081C9ED5, 6);     //only X,Y axis
-        //private NopStruct _Nop_Gun_Init = new NopStruct(0x081C9ED5, 15);  //Axis + Buttons
-
-        //NOP for Gun axis and buttons in-game
-        private NopStruct _Nop_Axis_X = new NopStruct(0x081536EF, 3);
-        private NopStruct _Nop_Axis_Y = new NopStruct(0x081536F7, 3);
-        private NopStruct _Nop_Trigger = new NopStruct(0x0815337D, 3);
-        private NopStruct _Nop_Reload_1 = new NopStruct(0x08153380, 3);
-        private NopStruct _Nop_Reload_2 = new NopStruct(0x08153714, 7);
-        private NopStruct _Nop_WeaponBtn = new NopStruct(0x08153383, 3);       
-        
         //Outputs Address
-        private UInt32 _OutputsPtr_Address = 0x0A6F2754;
-        private UInt32 _Outputs_Address = 0;
+        private UInt32 _JvsMgrPtr_Address = 0x0A6F2754;
         private UInt32 _Credits_Address = 0x0A715CC0;
-        private UInt32 _GameModePtr_Address = 0x0A6F27A8;
-        private UInt32 _PlayerStructPtr_Address = 0x0A6F27F8;
+        private UInt32 _GunMgrPtr_Address = 0x0A6F27A8;
+        private UInt32 _PlayerMgrPtr_Address = 0x0A6F27F8;
+
+        //Custom Data
+        private UInt32 _JvsRawAxes_CaveAddress;
+        private UInt32 _AdjustedAxes_CaveAddress;
+        private UInt32 _Buttons_CaveAddress;
 
         //Rom loaded + Rom version check
-        private UInt32 _RomLoaded_check_Instruction_RevA = 0x08152851;
-        private UInt32 _RomLoaded_check_Instruction_RevC = 0x08153065;
+        private UInt32 _RomLoaded_Check_Address = 0x08373BD8;
 
         /// <summary>
         /// Constructor
         /// </summary>
-        ///  public Naomi_Game(String DemulVersion, bool Verbose, bool DisableWindow)
         public Game_LindberghHotd4(String RomName)
-            : base(RomName, "BudgieLoader")
+            : base(RomName, "linuxloader")
         {
-            _KnownMd5Prints.Add("House of The Dead 4 - Rev.A", "7db931d8238dbd02325c0e0f8869a06d");
-            _KnownMd5Prints.Add("House of The Dead 4 - Rev.C", "036408020b362255455b84028618352b");
+            _KnownMd5Prints.Add("House of The Dead 4 (SBLC) (Rev.A)", "afc1c946193c2533eb131a259c9cdb66");
+            _KnownMd5Prints.Add("House of The Dead 4 (SBLC) (Rev.B)", "619511471598b5a1e89f3976c76ec83b");
+            _KnownMd5Prints.Add("House of The Dead 4 (SBLC) (Rev.C)", "036408020B362255455B84028618352B");
 
             _tProcess.Start();
             Logger.WriteLog("Waiting for Lindbergh " + _RomName + " game to hook.....");
@@ -79,41 +66,53 @@ namespace DemulShooter
 
                         if (_TargetProcess_MemoryBaseAddress != IntPtr.Zero)
                         {
-                            //To make sure BurgieLoader has loaded the rom entirely, we're looking for some random instruction to be present in memory before starting                            
-                            //And this instruction is also helping us detecting whether the game file is Rev.A or Rev.C binary, to call the corresponding hack
-                            byte[] buffer = ReadBytes(_RomLoaded_check_Instruction_RevA, 5);
-                            if (buffer[0] == 0xE8 && buffer[1] == 0x42 && buffer[2] == 0x0D && buffer[3] == 0x00 && buffer[4] == 0x00)
+                            if (_Target_Process_Name.ToLower().Contains("budgieloader"))
                             {
-                                _GameWindowHandle = _TargetProcess.MainWindowHandle;
+                                if (!FindGameWindow_Contains("TeknoBudgie"))
+                                {
+                                    Logger.WriteLog("Game Window not found, waiting...");
+                                    return;
+                                }
+                            }
+                            else if (_Target_Process_Name.ToLower().Contains("linuxloader"))
+                            {
+                                if (!FindGameWindow_Contains("FPS"))
+                                {
+                                    Logger.WriteLog("Game Window not found, waiting...");
+                                    return;
+                                }
+                            }
+
+                            //To make sure LinuxLoader has loaded the rom entirely, we're looking for some random instruction to be present in memory before starting                            
+                            //And this instruction is also helping us detecting whether the game file is Rev.A or Rev.B or Rev.C binary, to call the corresponding hack
+                            byte[] buffer = ReadBytes(_RomLoaded_Check_Address, 3);
+                            if (buffer.SequenceEqual(new byte[] { 0x04, 0xDE, 0xC1 }))
+                            {
                                 Logger.WriteLog("House Of The Dead 4 - Rev. A binary detected");
-                                _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 - Rev.A"];
-                                Logger.WriteLog("Attached to Process " + _Target_Process_Name + ".exe, ProcessHandle = " + _ProcessHandle);
-                                Logger.WriteLog(_Target_Process_Name + ".exe = 0x" + _TargetProcess_MemoryBaseAddress.ToString("X8"));
-                                ReadGameDataFromMd5Hash(GAMEDATA_FOLDER);
-                                Apply_MemoryHacks();
-                                _ProcessHooked = true;
-                                RaiseGameHookedEvent();
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 (SBLC) (Rev.A)"];
+                            }
+                            else if (buffer.SequenceEqual(new byte[] { 0x11, 0x0F, 0x57 }))
+                            {
+                                Logger.WriteLog("House Of The Dead 4 - Rev. B binary detected");
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 (SBLC) (Rev.B)"];
+                            }
+                            else if (buffer.SequenceEqual(new byte[] { 0x83, 0xEC, 0x14 }))
+                            {
+                                Logger.WriteLog("House Of The Dead 4 - Rev. C binary detected");
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 (SBLC) (Rev.C)"];
                             }
                             else
                             {
-                                buffer = ReadBytes(_RomLoaded_check_Instruction_RevC, 5);
-                                if (buffer[0] == 0xE8 && buffer[1] == 0x42 && buffer[2] == 0x0D && buffer[3] == 0x00 && buffer[4] == 0x00)
-                                {
-                                    _GameWindowHandle = _TargetProcess.MainWindowHandle;
-                                    Logger.WriteLog("House Of The Dead 4 - Rev.C binary detected");
-                                    _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 - Rev.C"];
-                                    Logger.WriteLog("Attached to Process " + _Target_Process_Name + ".exe, ProcessHandle = " + _ProcessHandle);
-                                    Logger.WriteLog(_Target_Process_Name + ".exe = 0x" + _TargetProcess_MemoryBaseAddress.ToString("X8"));
-                                    ReadGameDataFromMd5Hash(GAMEDATA_FOLDER);
-                                    Apply_MemoryHacks();
-                                    _ProcessHooked = true;
-                                    RaiseGameHookedEvent();
-                                }
-                                else
-                                {
-                                    Logger.WriteLog("Game not Loaded, waiting...");
-                                }
+                                Logger.WriteLog("Game not Loaded, waiting...");
+                                return;
                             }
+
+                            Logger.WriteLog("Attached to Process " + _Target_Process_Name + ".exe, ProcessHandle = " + _ProcessHandle);
+                            Logger.WriteLog(_Target_Process_Name + ".exe = 0x" + _TargetProcess_MemoryBaseAddress.ToString("X8"));
+                            ReadGameDataFromMd5Hash(GAMEDATA_FOLDER);
+                            Apply_MemoryHacks();
+                            _ProcessHooked = true;
+                            RaiseGameHookedEvent();
                         }
                     }
                 }
@@ -183,21 +182,152 @@ namespace DemulShooter
 
         protected override void Apply_InputsMemoryHack()
         {
-            // CgunMgr::Init()
-            // Init Axis and buttons values to 0
-            // Not called that often (maybe after START or CONTINUE or new level), maybe not necessary to block them
-            SetNops(0, _Nop_Gun_Init);
+            Create_InputsDataBank();
+            _JvsRawAxes_CaveAddress = _InputsDatabank_Address;
+            _AdjustedAxes_CaveAddress = _InputsDatabank_Address + 0x10;
+            _Buttons_CaveAddress = _InputsDatabank_Address + 0x20;
 
-            // CGunMgr::MainProc()
-            SetNops(0, _Nop_Axis_X);
-            SetNops(0, _Nop_Axis_Y);
-            SetNops(0, _Nop_Trigger);
-            SetNops(0, _Nop_Reload_1);
-            SetNops(0, _Nop_Reload_2);
-            SetNops(0, _Nop_WeaponBtn);            
+            SetHack_Axes();
+            SetHack_AdjustedAxes();
+            SetHack_Buttons();
 
             Logger.WriteLog("Inputs Memory Hack complete !");
             Logger.WriteLog("-");
+        }
+
+        /// <summary>
+        /// At the end of amJvspAckAnalogInput(), replacing Axis value before memory copy
+        /// </summary>
+        private void SetHack_Axes()
+        {
+            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess_MemoryBaseAddress);
+            CaveMemory.Open();
+            CaveMemory.Alloc(0x800);
+
+            if (_TargetProcess_Md5Hash.Equals(_KnownMd5Prints["House of The Dead 4 (SBLC) (Rev.A)"]))
+            {
+                //lea ecx,[eax-B]
+                CaveMemory.Write_StrBytes("8D 48 F5");
+                //movzx ecx,word ptr [ecx+_Axes_CaveAddress]
+                CaveMemory.Write_StrBytes("0F B6 89");
+                CaveMemory.Write_Bytes(BitConverter.GetBytes(_JvsRawAxes_CaveAddress));
+                //lea eax,[eax+edx+00000102]
+                CaveMemory.Write_StrBytes("8D 84 10 02 01 00 00");
+                //mov [eax],cx
+                CaveMemory.Write_StrBytes("66 89 08");
+            }
+            else
+            {
+                //lea ecx,[eax-B]
+                CaveMemory.Write_StrBytes("8D 48 F5");
+                //movzx ecx,word ptr [ecx+_Axes_CaveAddress]
+                CaveMemory.Write_StrBytes("0F B6 89");
+                CaveMemory.Write_Bytes(BitConverter.GetBytes(_JvsRawAxes_CaveAddress));
+                //lea eax,[eax+esi+00000102]
+                CaveMemory.Write_StrBytes("8D 84 30 02 01 00 00");
+                //mov [eax],cx
+                CaveMemory.Write_StrBytes("66 89 08");
+            }
+
+            //Inject it
+            CaveMemory.InjectToAddress(_JvsRawAxes_InjectionStruct, "Axes");
+        }
+
+        /// <summary>
+        /// Replacing GetAdjstGunPos() content
+        /// </summary>
+        private void SetHack_AdjustedAxes()
+        {
+            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess_MemoryBaseAddress);
+            CaveMemory.Open();
+            CaveMemory.Alloc(0x800);
+
+            //mov ebx,eax
+            CaveMemory.Write_StrBytes("8B D8");
+            //mov eax,[esp+18]
+            CaveMemory.Write_StrBytes("8B 44 24 18");
+            //shl eax,1
+            CaveMemory.Write_StrBytes("D1 E0");
+            //movzx eax,byte ptr [eax+_Buttons_CaveAddress + 6]
+            CaveMemory.Write_StrBytes("0F B6 80");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_Buttons_CaveAddress + 6));
+            //and al,1
+            CaveMemory.Write_StrBytes("24 01");
+            //test al,al
+            CaveMemory.Write_StrBytes("84 C0");
+            //je OnScreen
+            CaveMemory.Write_StrBytes("74 0F");
+            //mov [ebx],000000FF
+            CaveMemory.Write_StrBytes("C7 03 FF 00 00 00");
+            //mov [edx],000000FF
+            CaveMemory.Write_StrBytes("C7 02 FF 00 00 00");
+            //xor eax,eax
+            CaveMemory.Write_StrBytes("31 C0");
+            //ret
+            CaveMemory.Write_StrBytes("C3");
+
+            //OnScreen:
+            //mov eax,[esp+18]
+            CaveMemory.Write_StrBytes("8B 44 24 18");
+            //shl eax,1
+            CaveMemory.Write_StrBytes("D1 E0");
+            //add eax,_AdjustedAxes_CaveAddress
+            CaveMemory.Write_StrBytes("05");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_AdjustedAxes_CaveAddress));
+            //movzx eax,word ptr [eax]
+            CaveMemory.Write_StrBytes("0F B7 00");
+            //mov [ebx],00000000
+            CaveMemory.Write_StrBytes("C7 03 00 00 00 00");
+            //mov [edx],00000000
+            CaveMemory.Write_StrBytes("C7 02 00 00 00 00");
+            //mov [ebx],al
+            CaveMemory.Write_StrBytes("88 03");
+            //shr eax, 8
+            CaveMemory.Write_StrBytes("C1 E8 08");
+            //mov [edx],al
+            CaveMemory.Write_StrBytes("88 02");
+            //mov eax,00000001
+            CaveMemory.Write_StrBytes("B8 01 00 00 00");
+            //ret
+            CaveMemory.Write_StrBytes("C3");
+
+            //Inject it
+            CaveMemory.InjectToAddress(_AdjustedAxes_InjectionStruct, "Adjusted Axes");
+        }
+
+        /// <summary>
+        /// At the end of amJvspAckSwInput(), removing the wanted buttons bit states from the source memory (Trigger, Reload, and Grenade)
+        /// and changing the bits with custom values before memorycopy
+        /// </summary>
+        private void SetHack_Buttons()
+        {
+            Codecave CaveMemory = new Codecave(_TargetProcess, _TargetProcess_MemoryBaseAddress);
+            CaveMemory.Open();
+            CaveMemory.Alloc(0x800);
+
+            //cmp ebx,05
+            CaveMemory.Write_StrBytes("83 FB 05");
+            //je originalcode
+            CaveMemory.Write_StrBytes("74 28");
+            //and byte ptr [edx+ebx+00000102],
+            CaveMemory.Write_StrBytes("80 A4 1A 02 01 00 00 FC");
+            //and byte ptr [edx+ebx+00000103],7F
+            CaveMemory.Write_StrBytes("80 A4 1A 03 01 00 00 7F");
+            //movzx ecx,word ptr [ebx+_Buttons_CaveAddress]
+            CaveMemory.Write_StrBytes("0F B7 8B");
+            CaveMemory.Write_Bytes(BitConverter.GetBytes(_Buttons_CaveAddress));
+            //or [edx+ebx+00000102],cl
+            CaveMemory.Write_StrBytes("08 8C 1A 02 01 00 00");
+            //shr ecx,08
+            CaveMemory.Write_StrBytes("C1 E9 08");
+            //or [edx+ebx+00000103],cl
+            CaveMemory.Write_StrBytes("08 8C 1A 03 01 00 00");
+            //originalcode:
+            //lea eax,[edx+ebx+00000102]
+            CaveMemory.Write_StrBytes("8D 84 1A 02 01 00 00");
+
+            //Inject it
+            CaveMemory.InjectToAddress(_Buttons_InjectionStruct, "Buttons");
         }
 
         #endregion
@@ -209,65 +339,73 @@ namespace DemulShooter
         /// </summary> 
         public override void SendInput(PlayerSettings PlayerData)
         {
-            byte[] buffer = ReadBytes(_InputStructPtr_Address, 4);    
-            
             if (PlayerData.ID == 1)
             {
-                try
+                //First channels of analog inputs in JVS are RawPosition (0x00-0xFF) for each players (Bytes 0-7)
+                WriteByte(_JvsRawAxes_CaveAddress, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_JvsRawAxes_CaveAddress + 0x02, (byte)PlayerData.RIController.Computed_Y);
+
+                //Nexts channels (Bytes 8-15) have gun acceleration analog data. Default is 0x8000 when not moving, then goes up or down according to the acceleration direction for each axis
+                //Not setting these will stop gun shaking from moving
+                //For now on, shaking will be activated by shooting of screen until I find a way to perperly compute it
+                WriteBytes(_JvsRawAxes_CaveAddress + 0x08, new byte[] { 0x80, 0x00});
+                WriteBytes(_JvsRawAxes_CaveAddress + 0x0A, new byte[] { 0x80, 0x00 });
+
+                WriteByte(_AdjustedAxes_CaveAddress, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_AdjustedAxes_CaveAddress + 1, (byte)PlayerData.RIController.Computed_Y);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x02);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFD);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 7, 0x80);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 7, 0x7F);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
                 {
-                    _P1_InputStruct_Address = BitConverter.ToUInt32(buffer, 0) + 0x34;
-                    if (_P1_InputStruct_Address != 0)
-                    {
-                        WriteByte(_P1_InputStruct_Address + INPUT_X_OFFSET, (byte)PlayerData.RIController.Computed_X);
-                        WriteByte(_P1_InputStruct_Address + INPUT_Y_OFFSET, (byte)PlayerData.RIController.Computed_Y);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
-                            WriteByte(_P1_InputStruct_Address + INPUT_TRIGGER_OFFSET, 0x01);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
-                            WriteByte(_P1_InputStruct_Address + INPUT_TRIGGER_OFFSET, 0x00);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
-                            WriteByte(_P1_InputStruct_Address + INPUT_WEAPONBTN_OFFSET, 0x01);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
-                            WriteByte(_P1_InputStruct_Address + INPUT_WEAPONBTN_OFFSET, 0x00);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
-                            WriteByte(_P1_InputStruct_Address + INPUT_RELOAD_OFFSET, 0x01);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
-                            WriteByte(_P1_InputStruct_Address + INPUT_RELOAD_OFFSET, 0x00);
-                    }
+                    WriteByte(_JvsRawAxes_CaveAddress + 0x08, 0x00);
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x01);
                 }
-                catch
-                { }
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
+                {
+                    WriteByte(_JvsRawAxes_CaveAddress + 0x08, 0x80);
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFE);
+                }
             }
             else if (PlayerData.ID == 2)
             {
-                try
+                WriteByte(_JvsRawAxes_CaveAddress + 0x04, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_JvsRawAxes_CaveAddress + 0x06, (byte)PlayerData.RIController.Computed_Y);
+
+                WriteBytes(_JvsRawAxes_CaveAddress + 0x0C, new byte[] { 0x80, 0x00 });
+                WriteBytes(_JvsRawAxes_CaveAddress + 0x0E, new byte[] { 0x80, 0x00 });
+
+                WriteByte(_AdjustedAxes_CaveAddress + 2, (byte)PlayerData.RIController.Computed_X);
+                WriteByte(_AdjustedAxes_CaveAddress + 3, (byte)PlayerData.RIController.Computed_Y);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 8, 0x02);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 8, 0xFD);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 9, 0x80);
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 9, 0x7F);
+
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
                 {
-                    _P2_InputStruct_Address = BitConverter.ToUInt32(buffer, 0) + 0x58;
-                    if (_P2_InputStruct_Address != 0)
-                    {
-                        WriteByte(_P2_InputStruct_Address + INPUT_X_OFFSET, (byte)PlayerData.RIController.Computed_X);
-                        WriteByte(_P2_InputStruct_Address + INPUT_Y_OFFSET, (byte)PlayerData.RIController.Computed_Y);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerDown) != 0)
-                            WriteByte(_P2_InputStruct_Address + INPUT_TRIGGER_OFFSET, 0x01);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OnScreenTriggerUp) != 0)
-                            WriteByte(_P2_InputStruct_Address + INPUT_TRIGGER_OFFSET, 0x00);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionDown) != 0)
-                            WriteByte(_P2_InputStruct_Address + INPUT_WEAPONBTN_OFFSET, 0x01);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
-                            WriteByte(_P2_InputStruct_Address + INPUT_WEAPONBTN_OFFSET, 0x00);
-
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
-                            WriteByte(_P2_InputStruct_Address + INPUT_RELOAD_OFFSET, 0x01);
-                        if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
-                            WriteByte(_P2_InputStruct_Address + INPUT_RELOAD_OFFSET, 0x00);
-                    }
+                    WriteByte(_JvsRawAxes_CaveAddress + 0x0C, 0x00);
+                    Apply_OR_ByteMask(_Buttons_CaveAddress + 8, 0x01);
                 }
-                catch
-                { }
+                if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
+                {
+                    WriteByte(_JvsRawAxes_CaveAddress + 0x0C, 0x80);
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 8, 0xFE);
+                }
             }
         }
 
@@ -305,17 +443,17 @@ namespace DemulShooter
         public override void UpdateOutputValues()
         {
             //Original Outputs
-            _Outputs_Address = BitConverter.ToUInt32(ReadBytes(_OutputsPtr_Address, 4), 0);
-            int P1_Motor_Status = ReadByte(_Outputs_Address) >> 6 & 0x01;
-            int P2_Motor_Status = ReadByte(_Outputs_Address) >> 3 & 0x01;
-            SetOutputValue(OutputId.P1_LmpStart, ReadByte(_Outputs_Address) >> 7 & 0x01);
-            SetOutputValue(OutputId.P2_LmpStart, ReadByte(_Outputs_Address) >> 4 & 0x01);
+             UInt32 Outputs_Address = BitConverter.ToUInt32(ReadBytes(_JvsMgrPtr_Address, 4), 0);
+            int P1_Motor_Status = ReadByte(Outputs_Address) >> 6 & 0x01;
+            int P2_Motor_Status = ReadByte(Outputs_Address) >> 3 & 0x01;
+            SetOutputValue(OutputId.P1_LmpStart, ReadByte(Outputs_Address) >> 7 & 0x01);
+            SetOutputValue(OutputId.P2_LmpStart, ReadByte(Outputs_Address) >> 4 & 0x01);
             SetOutputValue(OutputId.P1_GunMotor, P1_Motor_Status);
             SetOutputValue(OutputId.P2_GunMotor, P2_Motor_Status);
 
             //Custom Outputs
-            UInt32 GameModePtr = BitConverter.ToUInt32(ReadBytes(ReadPtr(_GameModePtr_Address) + 0x2C, 4), 0);
-            int GameMode = ReadByte(GameModePtr + 0x38);            
+            UInt32 GameModePtr = BitConverter.ToUInt32(ReadBytes(ReadPtr(_GunMgrPtr_Address) + 0x2C, 4), 0);
+            int GameMode = ReadByte(GameModePtr + 0x38);
             _P1_Life = 0;
             _P2_Life = 0;
             _P1_Ammo = 0;
@@ -325,7 +463,7 @@ namespace DemulShooter
 
             if (GameMode == 8)
             {
-                UInt32 PlayersPtr_BaseAddress = ReadPtr(_PlayerStructPtr_Address);
+                UInt32 PlayersPtr_BaseAddress = ReadPtr(_PlayerMgrPtr_Address);
                 if (PlayersPtr_BaseAddress != 0)
                 {
                     UInt32 P1_StructAddress = ReadPtr(PlayersPtr_BaseAddress + 0x34);
@@ -375,7 +513,7 @@ namespace DemulShooter
                         //(this way, no recoil during attract mode)
                         if (_P2_Ammo < _P2_LastAmmo)
                             SetOutputValue(OutputId.P2_CtmRecoil, 1);
-                    } 
+                    }
                 }
             }
 
@@ -387,7 +525,7 @@ namespace DemulShooter
             SetOutputValue(OutputId.P1_Ammo, _P1_Ammo);
             SetOutputValue(OutputId.P2_Ammo, _P2_Ammo);
             SetOutputValue(OutputId.P1_Clip, P1_Clip);
-            SetOutputValue(OutputId.P2_Clip, P2_Clip); 
+            SetOutputValue(OutputId.P2_Clip, P2_Clip);
             SetOutputValue(OutputId.P1_Life, _P1_Life);
             SetOutputValue(OutputId.P2_Life, _P2_Life);
             SetOutputValue(OutputId.Credits, ReadByte(_Credits_Address));

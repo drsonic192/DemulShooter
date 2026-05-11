@@ -85,10 +85,13 @@
     <Compile Include="Games\Game_KonamiLethalEnforcer3.cs" />
     <Compile Include="Games\Game_KonamiWartran.cs" />
     <Compile Include="Games\Game_Lindbergh2spicy.cs" />
-    <Compile Include="Games\Game_LindberghGhostSquadEvo.cs" />
-    <Compile Include="Games\Game_LindberghHotdEx.cs" />
+    <Compile Include="Games\Game_LindberghGsquadEvo.cs" />
+    <Compile Include="Games\Game_LindberghHotd4.cs" />
     <Compile Include="Games\Game_LindberghHotd4Sp.cs" />
+    <Compile Include="Games\Game_LindberghHotdEx.cs" />
+    <Compile Include="Games\Game_LindberghLgj.cs" />
     <Compile Include="Games\Game_LindberghLgjsp.cs" />
+    <Compile Include="Games\Game_LindberghRambo.cs" />
     <Compile Include="Games\Game_PpmPoliceTrainer2.cs" />
     <Compile Include="Games\Game_RtJurassicPark.cs" />
     <Compile Include="Games\Game_Re2Transformers2.cs" />
@@ -135,9 +138,6 @@
     <Compile Include="Games\Game_WndHod2pc.cs" />
     <Compile Include="Games\Game_WndHod3pc.cs" />
     <Compile Include="Games\Game_WndHotdoPc.cs" />
-    <Compile Include="Games\Game_LindberghHotd4.cs" />
-    <Compile Include="Games\Game_LindberghLgj.cs" />
-    <Compile Include="Games\Game_LindberghRambo.cs" />
     <Compile Include="Games\Game_WndMadBullets.cs" />
     <Compile Include="Games\Game_WndProjectGreenBeat.cs" />
     <Compile Include="Games\Game_WndReload.cs" />
