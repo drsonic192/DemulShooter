@@ -1088,7 +1088,7 @@ namespace DemulShooter
                         Logger.WriteLog("Attached to Process " + _Target_Process_Name + ".exe, ProcessHandle = " + _ProcessHandle);
                         Logger.WriteLog(_Target_Process_Name + ".exe = 0x" + _TargetProcess_MemoryBaseAddress.ToString("X16"));
                         Logger.WriteLog("MainWindowHandle = 0x" + _TargetProcess.MainWindowHandle.ToString("X16"));
-                        Logger.WriteLog("MainWindowTitle" + _TargetProcess.MainWindowTitle);
+                        Logger.WriteLog("MainWindowTitle = " + _TargetProcess.MainWindowTitle);
                         return true;
                     }
                 }

@@ -2,12 +2,14 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using DsCore;
 using DsCore.Config;
 using DsCore.MameOutput;
 using DsCore.Memory;
 using DsCore.RawInput;
+using DsCore.Win32;
 
 namespace DemulShooter
 {
@@ -39,7 +41,7 @@ namespace DemulShooter
         /// </summary>
         ///  public Naomi_Game(String DemulVersion, bool Verbose, bool DisableWindow)
         public Game_Lindbergh2spicy(String RomName)
-            : base(RomName, "BudgieLoader")
+            : base(RomName, "LinuxLoader")
         {
             _KnownMd5Prints.Add("2 Spicy (SBMV)", "b2183415493f9901dd45197364d51ebb");
 
@@ -274,15 +276,48 @@ namespace DemulShooter
                         Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x08);
                 }
                 if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.ActionUp) != 0)
-                {
-                    Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFB);
-                }
+                    Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xF3); //Remove both PEDAL bits
 
                 if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerDown) != 0)
                     Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x01);
                 if ((PlayerData.RIController.Computed_Buttons & RawInputcontrollerButtonEvent.OffScreenTriggerUp) != 0)
                     Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFE);
             }
+        }
+
+        /// <summary>
+        /// Low-level Keyboard hook callback.
+        /// This is used to detect Pedal action for "Pedal-Mode" hack of DemulShooter
+        /// </summary>
+        public override IntPtr KeyboardHookCallback(IntPtr KeyboardHookID, int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                KBDLLHOOKSTRUCT s = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                if ((UInt32)wParam == Win32Define.WM_KEYDOWN)
+                {
+                    if (s.scanCode == HardwareScanCode.DIK_LEFT)
+                    {
+                        Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x04);
+                    }
+                    else if (s.scanCode == HardwareScanCode.DIK_RIGHT)
+                    {
+                        Apply_OR_ByteMask(_Buttons_CaveAddress + 6, 0x08);
+                    }
+                }
+                else if ((UInt32)wParam == Win32Define.WM_KEYUP)
+                {
+                    if (s.scanCode == HardwareScanCode.DIK_LEFT)
+                    {
+                        Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xFB);
+                    }
+                    else if (s.scanCode == HardwareScanCode.DIK_RIGHT)
+                    {
+                        Apply_AND_ByteMask(_Buttons_CaveAddress + 6, 0xF7);
+                    }
+                }
+            }
+            return Win32API.CallNextHookEx(KeyboardHookID, nCode, wParam, lParam);
         }
 
         #endregion

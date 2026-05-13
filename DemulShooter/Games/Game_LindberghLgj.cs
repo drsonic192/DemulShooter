@@ -28,6 +28,8 @@ namespace DemulShooter
         private const UInt32 INPUT_X_OFFSET = 0x134;
         private const UInt32 INPUT_Y_OFFSET = 0x138;
 
+        private UInt32 _NoCrosshair_Patch_Address = 0x080B0D06;
+
         //Outputs
         private UInt32 _JvsOutput_Address = 0x087D186D;
         private UInt32 _Credits_Address = 0x08C08420;
@@ -38,6 +40,7 @@ namespace DemulShooter
         private UInt32 _RawJvsAxes_CaveAddress;
         private UInt32 _Buttons_CaveAddress;
         private UInt32 _CustomRecoil_CaveAddress = 0;
+
 
         //Check instruction for game loaded
         private UInt32 _RomLoaded_Check_Address = 0x0807925B;
@@ -96,7 +99,7 @@ namespace DemulShooter
                             if (buffer.SequenceEqual(new byte[] { 0x8B, 0x1D, 0xB0 }))
                             {
                                 Logger.WriteLog("Let's Go Jungle! binary detected");
-                                _TargetProcess_Md5Hash = _KnownMd5Prints["Let's Go Jungle (SBLU)"];
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["Let's Go Jungle (SBLC)"];
                             }
                             else if (buffer.SequenceEqual(new byte[] { 0x00, 0x00, 0x8B }))
                             {
@@ -119,9 +122,10 @@ namespace DemulShooter
                         }
                     }
                 }
-                catch
+                catch (Exception Ex)
                 {
                     Logger.WriteLog("Error trying to hook " + _Target_Process_Name + ".exe");
+                    Logger.WriteLog(Ex.Message.ToString());
                 }
             }
             else
@@ -298,6 +302,15 @@ namespace DemulShooter
 
             //Inject it
             CaveMemory.InjectToAddress(_Recoil_InjectionStruct, "Recoil");
+        }
+
+        /// <summary>
+        /// acpPlayer::calc() calls AbkTrunk::StartBranch() a 2 different places, depending on the crosshair displayed (no shoot / shoot)
+        /// Changing the last parameter from 1 to 0 when the needed cursor is "shoot" will mask it
+        /// </summary>
+        protected override void Apply_NoCrosshairMemoryHack()
+        {
+            WriteByte(_NoCrosshair_Patch_Address, 0x00);
         }
 
         #endregion

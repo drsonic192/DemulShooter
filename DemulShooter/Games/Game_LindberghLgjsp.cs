@@ -29,6 +29,7 @@ namespace DemulShooter
         private const UInt32 INPUT_X_OFFSET = 0x134;
         private const UInt32 INPUT_Y_OFFSET = 0x138;
 
+        private UInt32 _NoCrosshair_Patch_Address = 0x080B7C36;
 
         //Outputs
         private UInt32 _JvsOutput_Address = 0x0880E5F5;
@@ -293,6 +294,15 @@ namespace DemulShooter
 
             //Inject it
             CaveMemory.InjectToAddress(_Recoil_InjectionStruct, "Recoil");
+        }
+
+        /// <summary>
+        /// acpPlayer::calc() calls AbkTrunk::StartBranch() a 2 different places, depending on the crosshair displayed (no shoot / shoot)
+        /// Changing the last parameter from 1 to 0 when the needed cursor is "shoot" will mask it
+        /// </summary>
+        protected override void Apply_NoCrosshairMemoryHack()
+        {
+            WriteByte(_NoCrosshair_Patch_Address, 0x00);
         }
 
         #endregion

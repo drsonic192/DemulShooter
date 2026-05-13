@@ -73,7 +73,7 @@ namespace DemulShooter
                         {
                             if (_Target_Process_Name.ToLower().Contains("budgieloader"))
                             {
-                                if (!FindGameWindow_Contains("TeknoBudgie"))
+                                if (!FindGameWindow_Contains("TeknoBudgie") && !FindGameWindow_Contains("FREEGLUT"))
                                 {
                                     Logger.WriteLog("Game Window not found, waiting...");
                                     return;

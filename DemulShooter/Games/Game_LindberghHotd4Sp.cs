@@ -43,7 +43,7 @@ namespace DemulShooter
         public Game_LindberghHotd4Sp(String RomName)
             : base(RomName, "linuxloader")
         {
-            _KnownMd5Prints.Add("House of The Dead 4 Secial (SBLS) (Rev.B)", "74baffc7429973f3df8902a31c5164a0");
+            _KnownMd5Prints.Add("House of The Dead 4 Special (SBLS) (Rev.B)", "74baffc7429973f3df8902a31c5164a0");
 
             _tProcess.Start();
             Logger.WriteLog("Waiting for Lindbergh " + _RomName + " game to hook.....");
@@ -90,7 +90,7 @@ namespace DemulShooter
                             if (buffer.SequenceEqual(new byte[] { 0x0D, 0x80, 0x00 }))
                             {
                                 Logger.WriteLog("House Of The Dead 4 Special - Rev. B binary detected");
-                                _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 Secial (SBLS) (Rev.B)"];
+                                _TargetProcess_Md5Hash = _KnownMd5Prints["House of The Dead 4 Special (SBLS) (Rev.B)"];
                             }
                             else
                             {
